@@ -3,6 +3,7 @@ import io
 import pandas as pd
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output, State
+import plotly.express as px
 
 app = Dash(__name__)
 
@@ -40,6 +41,24 @@ def parse_upload(contents, filename):
         return html.P(f"Ошибка чтения CSV: {e}", style={'color': 'red'})
     return build_dashboard(df)
 
+@app.callback(
+    Output("ts-graph", "figure"),
+    [Input("period-dropdown", "value"),
+     Input("upload-data", "contents")]
+)
+def update_ts(period, contents):
+    if contents is None:
+        return {}
+    content_type, content_string = contents.split(',')
+    decoded = base64.b64decode(content_string)
+    df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+    df['date'] = pd.to_datetime(df['date'])
+    df_resampled = df.set_index('date').resample(period).sum().reset_index()
+    fig = px.line(df_resampled, x='date', y='energy_kWh',
+                  title="Производство энергии (кВт·ч)")
+    fig.update_layout(transition_duration=500)
+    return fig
+
 def build_dashboard(df):
     return html.Div([
         html.P(f"✅ Файл {df.shape[0]} строк успешно загружен", style={'color': 'green'}),
@@ -51,6 +70,23 @@ def build_dashboard(df):
             style_table={'overflowX': 'auto'}
         )
     ])
+
+html.Div([
+    html.Label("Агрегировать по:"),
+    dcc.Dropdown(
+        id="period-dropdown",
+        options=[
+            {"label": "День", "value": "D"},
+            {"label": "Неделя", "value": "W"},
+            {"label": "Месяц", "value": "M"},
+        ],
+        value="D",
+        clearable=False,
+        style={'width': '200px'}
+    ),
+    dcc.Graph(id="ts-graph")
+], style={'marginTop': '30px'})
+
 
 if __name__ == "__main__":
     app.run_server(debug=True)

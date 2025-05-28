@@ -7,7 +7,14 @@ import plotly.express as px
 
 app = Dash(__name__)
 
-app.layout = html.Div([
+app.layout = html.Div(
+style={
+        'maxWidth': '1200px',
+        'margin': 'auto',
+        'padding': '20px',
+        'backgroundColor': '#f9f9f9'    # опционально — чуть светло-серого фона
+    },
+    children=[
     html.H1("Solar Energy Dashboard", style={'textAlign': 'center'}),
     html.P("Загрузите CSV с данными для анализа:", style={'textAlign': 'center'}),
     dcc.Upload(
@@ -60,32 +67,90 @@ def update_ts(period, contents):
     return fig
 
 def build_dashboard(df):
+    # df — DataFrame с колонками: date, energy_kWh, temperature, weather_type и т.д.
+
+    # Интерфейс: таблица, дропдаун + график, гистограмма, scatter, pie, индикаторы
     return html.Div([
-        html.P(f"✅ Файл {df.shape[0]} строк успешно загружен", style={'color': 'green'}),
+
+        # 1) Приветственное сообщение и таблица превью
+        html.P(
+            f"✅ Файл с {df.shape[0]} строками успешно загружен",
+            style={'color': 'green', 'fontWeight': 'bold'}
+        ),
         dash_table.DataTable(
             id="data-table",
             columns=[{"name": i, "id": i} for i in df.columns],
             data=df.head(5).to_dict('records'),
             page_size=5,
-            style_table={'overflowX': 'auto'}
-        )
-    ])
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'left'}
+        ),
 
-html.Div([
-    html.Label("Агрегировать по:"),
-    dcc.Dropdown(
-        id="period-dropdown",
-        options=[
-            {"label": "День", "value": "D"},
-            {"label": "Неделя", "value": "W"},
-            {"label": "Месяц", "value": "M"},
-        ],
-        value="D",
-        clearable=False,
-        style={'width': '200px'}
-    ),
-    dcc.Graph(id="ts-graph")
-], style={'marginTop': '30px'})
+        # 2) Dropdown + Time Series график
+        html.Div([
+            html.Label("Агрегировать по:", style={'fontWeight': 'bold'}),
+            dcc.Dropdown(
+                id="period-dropdown",
+                options=[
+                    {"label": "День",   "value": "D"},
+                    {"label": "Неделя","value": "W"},
+                    {"label": "Месяц", "value": "M"},
+                ],
+                value="D",
+                clearable=False,
+                style={'width': '200px', 'marginBottom': '10px'}
+            ),
+            dcc.Graph(id="ts-graph")
+        ], style={'marginTop': '30px'}),
+
+        # 3) Гистограмма распределения энергии
+        dcc.Graph(
+            id="histogram",
+            figure=px.histogram(
+                df,
+                x="energy_kWh",
+                nbins=30,
+                title="Распределение выработки энергии (кВт·ч)"
+            )
+        ),
+
+        # 4) Scatter-plot: температура vs энергия
+        dcc.Graph(
+            id="scatter",
+            figure=px.scatter(
+                df,
+                x="temperature",
+                y="energy_kWh",
+                trendline="ols",
+                title="Корреляция: Температура vs Энергия"
+            )
+        ),
+
+        # 5) Pie-chart по типу погоды
+        dcc.Graph(
+            id="pie",
+            figure=px.pie(
+                df,
+                names="weather_type",
+                values="energy_kWh",
+                title="Энергия по погодным условиям"
+            )
+        ),
+
+        # 6) Индикаторы: среднее и максимум энергии
+        html.Div([
+            html.Div([
+                html.H4("Среднее (кВт·ч)", style={'textAlign': 'center'}),
+                html.P(f"{df['energy_kWh'].mean():.2f}", style={'textAlign': 'center'})
+            ], style={'display': 'inline-block', 'width': '45%'}),
+            html.Div([
+                html.H4("Максимум (кВт·ч)", style={'textAlign': 'center'}),
+                html.P(f"{df['energy_kWh'].max():.2f}", style={'textAlign': 'center'})
+            ], style={'display': 'inline-block', 'width': '45%'})
+        ], style={'marginTop': '30px'})
+
+    ], style={'maxWidth': '1000px', 'margin': 'auto', 'padding': '20px'})
+
 
 
 if __name__ == "__main__":

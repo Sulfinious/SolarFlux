@@ -1,27 +1,25 @@
 import pandas as pd
+import numpy as np
 import plotly.express as px
 
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output
 
-# Цветовая тема: мягкие синие, зеленые и серые
+# Цветовая тема
 THEME = {
-    'background': '#f0f2f5',  # светло-серый
-    'primary': '#2c3e50',     # темно-синий
-    'secondary': '#27ae60',   # зеленый
-    'text': '#34495e'         # серо-синий для текста
+    'background': '#f0f2f5',
+    'primary': '#2c3e50',
+    'secondary': '#27ae60',
+    'text': '#34495e'
 }
 
-# URL CSV с вашими данными (поля: date, city_id, datetime, temperature, humidity, solar_radiation)
 CSV_URL = (
     "https://raw.githubusercontent.com/"
     "Sulfinious/SolarFlux/main/weathergis.csv"
 )
 
-# Инициализация приложения
 app = Dash(__name__)
 
-# Макет приложения
 app.layout = html.Div(
     style={
         'backgroundColor': THEME['background'],
@@ -51,7 +49,7 @@ app.layout = html.Div(
                 id="show-analysis",
                 n_clicks=0,
                 style={
-                    'fontSize': '16px',
+                    'fontSize': '23px',
                     'padding': '10px 20px',
                     'borderRadius': '6px',
                     'backgroundColor': THEME['secondary'],
@@ -67,7 +65,6 @@ app.layout = html.Div(
     ]
 )
 
-# Callback для кнопки «Показать анализ»
 @app.callback(
     Output("output-upload", "children"),
     Input("show-analysis", "n_clicks")
@@ -79,30 +76,45 @@ def on_click_show(n_clicks):
             style={'textAlign': 'center', 'color': THEME['text']}
         )
 
-    # Загружаем CSV
+    # Загружаем CSV и сразу парсим datetime
     try:
-        df = pd.read_csv(CSV_URL)
+        df = pd.read_csv(CSV_URL, parse_dates=['datetime'])
     except Exception as e:
         return html.P(f"Ошибка загрузки CSV: {e}", style={'color': 'red'})
 
-    # Конвертация даты
-    first_col = df.columns[0]
-    df = df.rename(columns={first_col: 'date'})
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    # Удаляем лишний столбец, если он есть
+    if 'unique_id' in df.columns:
+        df = df.drop(columns=['unique_id'])
 
-    # Ежедневная агрегация solar_radiation (только этот столбец)
-    df_resampled = (
-        df.set_index('date')['solar_radiation']
-        .resample('D')
+    # Добавляем колонку date (без времени) для агрегации по дням
+    df['date'] = df['datetime'].dt.normalize()
+
+    # Расчёт ежедневного среднего солнечной радиации
+    df_daily = (
+        df
+        .groupby('date', as_index=False)['solar_radiation']
         .mean()
-        .reset_index()
     )
 
-    # Графики по solar_radiation
+    # Категории для круговой диаграммы
+    df_daily['category'] = np.where(
+        df_daily['solar_radiation'] < 100,
+        '< 100 Вт/м²',
+        '≥ 100 Вт/м²'
+    )
+    # Подсчёт количества дней в каждой категории
+    pie_data = (
+        df_daily['category']
+        .value_counts()
+        .reset_index()
+        .rename(columns={'index': 'category'})
+    )
+
+    # Графики
     ts_fig = px.line(
-        df_resampled,
-        x='date', y='solar_radiation',
-        title='Средняя солнечная радиация (Вт/м²) — ежедневная агрегация',
+        df,
+        x='datetime', y='solar_radiation',
+        title='Солнечная радиация (Вт/м²)',
         color_discrete_sequence=[THEME['primary']]
     )
     hist_fig = px.histogram(
@@ -119,29 +131,51 @@ def on_click_show(n_clicks):
         title='Температура vs Солнечная радиация',
         color_discrete_sequence=[THEME['primary']]
     )
+    pie_fig = px.pie(
+        pie_data,
+        names='category',
+        values='count',
+        title='Дней с солнечной радиацией <100 и ≥100 Вт/м²',
+        color_discrete_sequence=[THEME['primary'], THEME['secondary']]
+    )
 
-    # Таблица и индикаторы
+    # Статистики
     avg_rad = df['solar_radiation'].dropna().mean()
     max_rad = df['solar_radiation'].dropna().max()
 
     return html.Div([
-        # Превью таблицы
         html.P(
-            f"✅ Загружено {df.shape[0]} строк с данными.",
+            f"✅ Загружено {df.shape[0]} строк с данными; дней в выборке: {df_daily.shape[0]}.",
             style={'color': THEME['secondary'], 'fontWeight': 'bold'}
         ),
+
         dash_table.DataTable(
-            columns=[{'name': i, 'id': i} for i in df.columns],
-            data=df.head(5).to_dict('records'),
-            page_size=5,
-            style_table={'overflowX': 'auto'},
+            columns=[{'name': col, 'id': col} for col in df.columns if col != 'date'],
+            data=df.drop(columns=['date']).to_dict('records'),
+            page_action='none',
+            virtualization=True,
+            fixed_rows={'headers': True},
+            style_table={
+                'maxHeight': '600px',
+                'overflowY': 'auto',
+                'overflowX': 'auto'
+            },
             style_header={'backgroundColor': THEME['primary'], 'color': 'white'},
             style_cell={'textAlign': 'left', 'color': THEME['text']}
         ),
-        # Графики
+
+        # Линейный график
         dcc.Graph(id='ts-graph', figure=ts_fig),
+
+        # Гистограмма
         dcc.Graph(id='histogram', figure=hist_fig),
+
+        # Точечный график
         dcc.Graph(id='scatter', figure=scatter_fig),
+
+        # Круговая диаграмма
+        dcc.Graph(id='pie-chart', figure=pie_fig),
+
         # Индикаторы: среднее и максимум
         html.Div([
             html.Div([
@@ -151,11 +185,10 @@ def on_click_show(n_clicks):
             html.Div([
                 html.H4('Максимальная радиация (Вт/м²)', style={'textAlign': 'center', 'color': THEME['primary']}),
                 html.P(f"{max_rad:.2f}", style={'textAlign': 'center', 'color': THEME['text']})
-            ], style={'display': 'inline-block', 'width': '45%'})
+            ], style={'display': 'inline-block', 'width': '45%'}),
         ], style={'marginTop': '20px'})
+    ], style={'maxWidth': '1200px', 'margin': 'auto', 'padding': '20px'})
 
-    ], style={'maxWidth': '1000px', 'margin': 'auto', 'padding': '20px'})
 
-# Точка входа
 if __name__ == '__main__':
     app.run(debug=True)
